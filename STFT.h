@@ -17,6 +17,15 @@ class STFT{
     const double MATLAB_scale = 32768;
 
     HannWindow *hw;
+
+    /* WOLA synthesis window : w[n] / sum_k w^2[n - k*shift]
+       Without this division the overlap-added w^2 envelope is not constant,
+       which adds a periodic ripple at (sr/shift_size) Hz to the output.
+       Matches ONNXSTFT.window_istft on the python side. */
+    bool wola = false;
+    double* syn_window = nullptr;
+    inline void synthesis_window(double* buffer);
+    inline void synthesis_window(double** buffer, int n_channels);
     FFTbase*fft;
     OA *ap;
 
@@ -42,7 +51,7 @@ class STFT{
     }
 
   public :
-    inline STFT(int channels,int frame,int shift);
+    inline STFT(int channels,int frame,int shift,bool wola_synthesis=false);
     inline ~STFT();
 
     /* in from input device or file
@@ -87,14 +96,38 @@ class STFT{
 };
 
 
-STFT::STFT(int channels_,int frame_,int shift_){
+STFT::STFT(int channels_,int frame_,int shift_,bool wola_synthesis){
   int i;
   channels = channels_;
   frame_size = frame_;
   shift_size = shift_;
   ol = frame_size - shift_size;
 
-  hw = new HannWindow(frame_size, shift_size);
+  wola = wola_synthesis;
+  if (wola) {
+    /* analysis : plain hann, no normalization (== torch.hann_window) */
+    hw = new HannWindow(frame_size, shift_size, -1, false);
+    /* synthesis : w[n] / sum_k w^2[n - k*shift] */
+    const double PI_ = 3.141592653589793;
+    syn_window = new double[frame_size];
+    double* env = new double[shift_size];
+    for (int n = 0; n < shift_size; n++) {
+      double e = 0.0;
+      for (int j = n; j < frame_size; j += shift_size) {
+        double w = 0.5 - 0.5 * cos(2.0 * PI_ * (j / (double)frame_size));
+        e += w * w;
+      }
+      env[n] = e;
+    }
+    for (int n = 0; n < frame_size; n++) {
+      double w = 0.5 - 0.5 * cos(2.0 * PI_ * (n / (double)frame_size));
+      syn_window[n] = w / env[n % shift_size];
+    }
+    delete[] env;
+  }
+  else {
+    hw = new HannWindow(frame_size, shift_size);
+  }
 
   if (is_power_of_two(frame_size)) {
     //printf("STFT::FFT\n");
@@ -119,6 +152,7 @@ STFT::STFT(int channels_,int frame_,int shift_){
 STFT::~STFT(){
   int i;
   delete hw;
+  if (syn_window) delete[] syn_window;
   delete fft;
   delete ap;
   for(i=0;i<channels;i++)
@@ -126,6 +160,17 @@ STFT::~STFT(){
   delete[] buf;
   if (tmp)delete[] tmp;
 
+}
+
+inline void STFT::synthesis_window(double* buffer) {
+  if (!wola) { hw->Process(buffer); return; }
+  for (int j = 0; j < frame_size; j++) buffer[j] *= syn_window[j];
+}
+
+inline void STFT::synthesis_window(double** buffer, int n_channels) {
+  if (!wola) { hw->Process(buffer, n_channels); return; }
+  for (int i = 0; i < n_channels; i++)
+    for (int j = 0; j < frame_size; j++) buffer[i][j] *= syn_window[j];
 }
 
 void STFT::stft(short*in,int length,double**out){
@@ -187,7 +232,7 @@ void STFT::istft(double**in,short*out){
   fft->iFFT(in);
 
   /*** Window ***/
-  hw->Process(in, channels);
+  synthesis_window(in, channels);
 
   // scaling for precision
   for (int i = 0; i < channels; i++)
@@ -313,7 +358,7 @@ void STFT::istft(double* in, short* out) {
   fft->iFFT(in);
 
   /*** Window ***/
-  hw->Process(in);
+  synthesis_window(in);
 
   for (int j = 0; j < frame_size; j++)
     in[j] *= MATLAB_scale;
@@ -330,7 +375,7 @@ void STFT::istft(float* in, float* out) {
   fft->iFFT(tmp);
 
   /*** Window ***/
-  hw->Process(tmp);
+  synthesis_window(tmp);
 
   //for (int j = 0; j < frame_size; j++)tmp[j] *= MATLAB_scale;
 
@@ -346,7 +391,7 @@ void STFT::istft(double* in, double* out) {
   fft->iFFT(in);
 
   /*** Window ***/
-  hw->Process(in);
+  synthesis_window(in);
 
   //for (int j = 0; j < frame_size; j++)in[j] *= MATLAB_scale;
 
@@ -362,7 +407,7 @@ void STFT::istft(double**in,double**out){
   fft->iFFT(in);
 
   /*** Window ***/
-  hw->Process(in, channels);
+  synthesis_window(in, channels);
 
   /*** Output ***/
   ap->Overlap(in);
@@ -399,7 +444,7 @@ void STFT::istft(double**in,float**out){
   fft->iFFT(in);
 
   /*** Window ***/
-  hw->Process(in, channels);
+  synthesis_window(in, channels);
 
   /*** Output ***/
   for (int i = 0; i < channels; i++)
