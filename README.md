@@ -112,8 +112,6 @@ while(!input.IsEOF()){
 + 갈라진 지점 : `36b3a9d`
 + 작업 브랜치 : `ko`
 + 전체 차이 보기 : `git diff 36b3a9d..ko`
-+ 쓰는 쪽 : `mpWAV/mpNC`, `mpWAV/2025_irlink_mpNCw` (IR_Link)
-
 upstream 과 다른 점은 `STFT.h` 하나뿐이다 (`e99525d`).
 
 ## `STFT.h` : WOLA 합성 윈도 옵션
@@ -138,9 +136,8 @@ STFT(int channels, int frame, int shift, bool wola_synthesis = false);
 `sr / shift_size` Hz 주기의 리플이 생긴다. 파이썬 쪽
 `ONNXSTFT.window_istft` 와 출력을 맞추려면 필요하다.
 
-`mpNC` 는 이 옵션을 켜고 쓴다 (`mpNC_impl.cpp` 의
-`new STFT(n_channel, n_fft, n_hop, true)`). 즉 **`ko` 브랜치 없이는 mpNC 가
-컴파일되지 않는다** - 3인자 생성자에 기본값이 없기 때문이다.
+네 번째 인자를 넘기는 코드는 upstream 에 그 매개변수가 아예 없으므로 **`ko`
+브랜치 없이는 컴파일되지 않는다.**
 
 ## upstream 과 다시 합칠 때
 
